@@ -1,5 +1,5 @@
 import type { Bot } from "grammy";
-import type { TariffCell } from "@tolbazy/shared";
+import type { TariffCell } from "../../../../packages/shared/src/index.js";
 import { prisma } from "../db";
 import { quoteAnyFleetRange, quoteRoutePrice } from "./pricing";
 import { DEFAULT_RACE_SETTINGS, getEligibleDrivers } from "./race";

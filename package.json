@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "description": "Telegram taxi aggregator for Tolbazy and Aurgazinsky district.",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev": "npm-run-all --parallel dev:api dev:admin",
     "dev:api": "tsx watch apps/api/src/index.ts",

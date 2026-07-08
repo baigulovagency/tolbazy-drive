@@ -1,5 +1,5 @@
-import type { TariffCell } from "@tolbazy/shared";
-import { calculateSegmentPrice } from "@tolbazy/shared";
+import type { TariffCell } from "../../../../packages/shared/src/index.js";
+import { calculateSegmentPrice } from "../../../../packages/shared/src/index.js";
 
 export type PricingPoint = {
   label: string;
