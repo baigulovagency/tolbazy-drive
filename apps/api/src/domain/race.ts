@@ -18,6 +18,13 @@ export async function acceptOrderAtomically(params: {
   fleetId: string;
 }) {
   return prisma.$transaction(async (tx) => {
+    const order = await tx.order.findUnique({ where: { id: params.orderId } });
+    if (!order || order.status !== "broadcasting" || order.driverId) {
+      return { accepted: false as const };
+    }
+
+    const round = order.currentRound || 1;
+
     const updated = await tx.order.updateMany({
       where: {
         id: params.orderId,
@@ -49,13 +56,13 @@ export async function acceptOrderAtomically(params: {
         orderId_driverId_round: {
           orderId: params.orderId,
           driverId: params.driverUserId,
-          round: 1
+          round
         }
       },
       create: {
         orderId: params.orderId,
         driverId: params.driverUserId,
-        round: 1,
+        round,
         status: "accepted"
       },
       update: {
