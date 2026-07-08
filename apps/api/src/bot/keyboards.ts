@@ -1,4 +1,5 @@
 import { InlineKeyboard, Keyboard } from "grammy";
+import { t } from "../domain/bot-texts";
 
 type ZoneOption = { id: string; name: string; type: string };
 
@@ -6,22 +7,22 @@ export function passengerMainMenu(lastRouteLabel?: string) {
   const keyboard = new Keyboard();
 
   if (lastRouteLabel) {
-    keyboard.text(`🔁 Повторить: ${lastRouteLabel}`).row();
+    keyboard.text(t("kbd.repeat", { route: lastRouteLabel })).row();
   }
 
-  keyboard.text("🚕 Новый заказ").row();
-  keyboard.text("📋 Мои поездки").text("📍 Мои адреса").row();
-  keyboard.text("❌ Отменить заказ").text("❓ Помощь").resized();
+  keyboard.text(t("kbd.new_order")).row();
+  keyboard.text(t("kbd.my_trips")).text(t("kbd.my_addresses")).row();
+  keyboard.text(t("kbd.cancel_order")).text(t("kbd.help")).resized();
 
   return keyboard;
 }
 
 export function zoneGroupKeyboard(step: "from" | "to") {
   return new InlineKeyboard()
-    .text("🏘 Толбазы", `zonegrp:${step}:tolbazy`)
-    .text("🌾 Деревни", `zonegrp:${step}:district`)
+    .text(t("kbd.zone_town"), `zonegrp:${step}:tolbazy`)
+    .text(t("kbd.zone_village"), `zonegrp:${step}:district`)
     .row()
-    .text("❌ Отмена", "order:cancel");
+    .text(t("kbd.cancel"), "order:cancel");
 }
 
 export function zonesKeyboard(step: "from" | "to", zones: ZoneOption[]) {
@@ -31,37 +32,37 @@ export function zonesKeyboard(step: "from" | "to", zones: ZoneOption[]) {
     keyboard.text(zone.name, `zone:${step}:${zone.id}`).row();
   }
 
-  keyboard.text("⬅️ Назад", `zonegrp:${step}:back`).text("❌ Отмена", "order:cancel");
+  keyboard.text(t("kbd.back"), `zonegrp:${step}:back`).text(t("kbd.cancel"), "order:cancel");
   return keyboard;
 }
 
 export function fleetChoiceKeyboard(fleets: Array<{ id: string; name: string }>) {
-  const keyboard = new InlineKeyboard().text("🎲 Любой свободный", "fleet:any").row();
+  const keyboard = new InlineKeyboard().text(t("kbd.fleet_any"), "fleet:any").row();
   for (const fleet of fleets) {
     keyboard.text(fleet.name, `fleet:${fleet.id}`).row();
   }
-  keyboard.text("⬅️ Назад", "order:back:to").text("❌ Отмена", "order:cancel");
+  keyboard.text(t("kbd.back"), "order:back:to").text(t("kbd.cancel"), "order:cancel");
   return keyboard;
 }
 
 export function confirmOrderKeyboard() {
   return new InlineKeyboard()
-    .text("✅ Заказать", "order:confirm")
-    .text("✏️ Изменить", "order:restart")
+    .text(t("kbd.confirm"), "order:confirm")
+    .text(t("kbd.edit"), "order:restart")
     .row()
-    .text("❌ Отмена", "order:cancel");
+    .text(t("kbd.cancel"), "order:cancel");
 }
 
 export function driverOfferKeyboard(orderId: string, round: number) {
   return new InlineKeyboard()
-    .text("✅ Принять", `driver:accept:${orderId}`)
-    .text("❌ Пропустить", `driver:skip:${orderId}:${round}`);
+    .text(t("kbd.accept"), `driver:accept:${orderId}`)
+    .text(t("kbd.skip"), `driver:skip:${orderId}:${round}`);
 }
 
 export function activeRideKeyboard(dispatcherPhone?: string) {
-  const keyboard = new InlineKeyboard().text("📞 Позвонить водителю", "ride:call_driver").row();
+  const keyboard = new InlineKeyboard().text(t("kbd.call_driver"), "ride:call_driver").row();
   if (dispatcherPhone) {
-    keyboard.text("📞 Диспетчер парка", `ride:dispatcher:${dispatcherPhone}`).row();
+    keyboard.text(t("kbd.call_dispatcher"), `ride:dispatcher:${dispatcherPhone}`).row();
   }
-  return keyboard.text("❌ Отменить", "ride:cancel");
+  return keyboard.text(t("kbd.cancel"), "ride:cancel");
 }

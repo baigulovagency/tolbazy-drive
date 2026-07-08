@@ -19,6 +19,9 @@ export default function DashboardPage() {
         <p>
           Админка агрегатора такси: автопарки, зоны, тарифы, водители, диспетчеры и race-раздача заказов.
         </p>
+        <p>
+          <a href="/texts">Редактировать тексты бота →</a>
+        </p>
       </section>
 
       <section className="grid">

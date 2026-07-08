@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { createTelegramBot } from "./bot/bot";
+import { reloadBotTexts, seedBotTexts } from "./domain/bot-texts";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerOrderRoutes } from "./routes/orders";
 
@@ -20,6 +21,8 @@ async function main() {
   const port = Number(process.env.API_PORT ?? 4000);
 
   if (process.env.TELEGRAM_BOT_TOKEN) {
+    await seedBotTexts();
+    await reloadBotTexts();
     const { bot } = createTelegramBot(process.env.TELEGRAM_BOT_TOKEN);
     bot.start();
     app.log.info("Telegram bot started");

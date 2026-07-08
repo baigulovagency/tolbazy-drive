@@ -1,6 +1,7 @@
 import type { Bot } from "grammy";
 import type { TariffCell } from "../../../../packages/shared/src/index.js";
 import { prisma } from "../db";
+import { t } from "./bot-texts";
 import { quoteAnyFleetRange, quoteRoutePrice } from "./pricing";
 import { DEFAULT_RACE_SETTINGS, getEligibleDrivers } from "./race";
 
@@ -83,6 +84,8 @@ export async function createAndBroadcastOrder(params: {
   fleetChoice: "any" | "specific";
   quotedPriceRub?: number;
   priceLabel: string;
+  passengerChatId?: string;
+  passengerMessageId?: string;
 }) {
   const order = await prisma.order.create({
     data: {
@@ -95,7 +98,9 @@ export async function createAndBroadcastOrder(params: {
       ],
       isRoundTrip: false,
       quotedPriceRub: params.quotedPriceRub,
-      currentRound: 1
+      currentRound: 1,
+      passengerChatId: params.passengerChatId,
+      passengerMessageId: params.passengerMessageId
     },
     include: { passenger: true }
   });
@@ -135,12 +140,12 @@ export async function broadcastOrderRound(params: {
   let sentCount = 0;
 
   const text = [
-    "🚕 НОВЫЙ ЗАКАЗ",
+    t("driver.offer_header"),
     "───────────────",
-    `Откуда: ${params.fromLabel}`,
-    `Куда: ${params.toLabel}`,
-    `💰 ${params.priceLabel}`,
-    `⏱ Раунд ${params.round}/${DEFAULT_RACE_SETTINGS.maxRounds}`
+    `${t("label.from")}: ${params.fromLabel}`,
+    `${t("label.to")}: ${params.toLabel}`,
+    `${t("label.price")} ${params.priceLabel}`,
+    t("label.round", { round: params.round, maxRounds: DEFAULT_RACE_SETTINGS.maxRounds })
   ].join("\n");
 
   for (const driver of drivers) {
@@ -232,9 +237,20 @@ export async function scheduleRaceRounds(params: {
       data: { status: "expired" }
     });
 
-    await params.bot.api.sendMessage(
-      current.passenger.telegramId,
-      "😔 Пока не удалось найти свободную машину. Попробуйте ещё раз или выберите другой автопарк."
-    );
+    const expiredText = t("order.expired");
+    const edited = current.passengerMessageId && current.passengerChatId
+      ? await params.bot.api
+          .editMessageText(
+            Number(current.passengerChatId),
+            Number(current.passengerMessageId),
+            expiredText
+          )
+          .then(() => true)
+          .catch(() => false)
+      : false;
+
+    if (!edited && current.passenger.telegramId) {
+      await params.bot.api.sendMessage(current.passenger.telegramId, expiredText);
+    }
   }, maxRounds * (roundSeconds + pauseSeconds) * 1000);
 }

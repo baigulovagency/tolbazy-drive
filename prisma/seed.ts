@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { DEFAULT_FLEETS, DEFAULT_ZONES, buildDefaultTariffMatrix } from "../packages/shared/src/index";
+import { seedBotTexts } from "../apps/api/src/domain/bot-texts";
 
 const prisma = new PrismaClient();
 
@@ -49,6 +50,8 @@ async function main() {
       });
     }
   }
+
+  await seedBotTexts();
 }
 
 main()

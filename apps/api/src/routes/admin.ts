@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { prisma } from "../db";
+import { reloadBotTexts } from "../domain/bot-texts.js";
 
 export async function registerAdminRoutes(app: FastifyInstance) {
   app.get("/admin/bootstrap", async () => {
@@ -64,5 +65,34 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       where: { id: request.params.tariffId },
       data: { priceRub: request.body.priceRub }
     });
+  });
+
+  app.get("/admin/bot-texts", async () => {
+    return prisma.botText.findMany({
+      orderBy: [{ category: "asc" }, { key: "asc" }]
+    });
+  });
+
+  app.put<{
+    Params: { key: string };
+    Body: { body: string };
+  }>("/admin/bot-texts/:key", async (request, reply) => {
+    const existing = await prisma.botText.findUnique({
+      where: { key: request.params.key }
+    });
+
+    if (!existing) {
+      reply.code(404);
+      return { error: "Text key not found" };
+    }
+
+    const updated = await prisma.botText.update({
+      where: { key: request.params.key },
+      data: { body: request.body.body }
+    });
+
+    await reloadBotTexts();
+
+    return updated;
   });
 }

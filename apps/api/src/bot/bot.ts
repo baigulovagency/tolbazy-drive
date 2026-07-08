@@ -1,5 +1,6 @@
-import { Bot } from "grammy";
+import { Bot, type Context } from "grammy";
 import { prisma } from "../db";
+import { t } from "../domain/bot-texts";
 import {
   createAndBroadcastOrder,
   formatRouteLabel,
@@ -19,6 +20,7 @@ import {
   zonesKeyboard
 } from "./keyboards";
 import { clearDraft, getDraft, setDraft, startDraft } from "./session";
+import { editHub, editPassengerOrderMessage, getHub, setHub, showHub } from "./ui";
 
 async function getOrCreatePassenger(telegramId: string, name?: string) {
   return prisma.user.upsert({
@@ -29,17 +31,40 @@ async function getOrCreatePassenger(telegramId: string, name?: string) {
 }
 
 function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    broadcasting: "Ищем машину…",
-    taken: "Водитель назначен",
-    arriving: "Едет к вам",
-    waiting: "На месте",
-    in_trip: "В пути",
-    completed: "Завершено",
-    cancelled: "Отменено",
-    expired: "Не нашли машину"
-  };
-  return labels[status] ?? status;
+  const key = `status.${status}`;
+  const translated = t(key);
+  return translated === key ? status : translated;
+}
+
+function buildOrderSummary(params: {
+  fromLabel: string;
+  toLabel: string;
+  fleetLabel: string;
+  priceLabel: string;
+  details?: string;
+}) {
+  return [
+    t("order.summary_header"),
+    "",
+    `${t("label.from")}: ${params.fromLabel}`,
+    `${t("label.to")}: ${params.toLabel}`,
+    `${t("label.fleet")}: ${params.fleetLabel}`,
+    `${t("label.price")} ${params.priceLabel}`,
+    params.details ? `\n${params.details}` : ""
+  ].join("\n");
+}
+
+async function showWelcome(ctx: Context, telegramId: string, name?: string | null) {
+  const text = t("bot.welcome", { name: name ?? "друг" });
+  const hub = getHub(telegramId);
+
+  if (hub) {
+    await showHub(ctx, telegramId, text);
+    return;
+  }
+
+  const message = await ctx.reply(text, { reply_markup: passengerMainMenu() });
+  setHub(telegramId, message.chat.id, message.message_id);
 }
 
 export function createTelegramBot(token: string) {
@@ -52,16 +77,14 @@ export function createTelegramBot(token: string) {
   bot.command("start", async (ctx) => {
     const telegramId = String(ctx.from?.id);
     const user = await getOrCreatePassenger(telegramId, ctx.from?.first_name);
-
-    await ctx.reply(
-      `Здравствуйте, ${user.name ?? "друг"}! Это Толбазы Драйв.\n\nЗакажите такси без звонков по разным номерам.`,
-      { reply_markup: passengerMainMenu() }
-    );
+    clearDraft(telegramId);
+    await showWelcome(ctx, telegramId, user.name);
   });
 
   bot.command("cancel", async (ctx) => {
-    clearDraft(String(ctx.from?.id));
-    await ctx.reply("Заказ отменён.", { reply_markup: passengerMainMenu() });
+    const telegramId = String(ctx.from?.id);
+    clearDraft(telegramId);
+    await showHub(ctx, telegramId, t("bot.cancelled"));
   });
 
   bot.command("driver", async (ctx) => {
@@ -72,7 +95,7 @@ export function createTelegramBot(token: string) {
     });
 
     if (!user || user.role !== "driver" || !user.driverProfile) {
-      await ctx.reply("Вы не зарегистрированы как водитель. Обратитесь к диспетчеру автопарка.");
+      await ctx.reply(t("driver.not_registered"));
       return;
     }
 
@@ -84,61 +107,64 @@ export function createTelegramBot(token: string) {
 
     await ctx.reply(
       isOnline
-        ? `✅ Вы на линии (${user.fleet?.name ?? "автопарк"}).\nНовые заказы будут приходить сюда.`
-        : "Вы сняты с линии. Заказы приходить не будут."
+        ? t("driver.online", { fleet: user.fleet?.name ?? "автопарк" })
+        : t("driver.offline")
     );
   });
 
-  bot.hears("🚕 Новый заказ", async (ctx) => {
-    const telegramId = String(ctx.from?.id);
-    await getOrCreatePassenger(telegramId, ctx.from?.first_name);
-    startDraft(telegramId);
-
-    await ctx.reply("📍 Откуда поедем?\n\nВыберите зону:", {
-      reply_markup: zoneGroupKeyboard("from")
-    });
-  });
-
-  bot.hears("📋 Мои поездки", async (ctx) => {
-    const telegramId = String(ctx.from?.id);
-    const user = await getOrCreatePassenger(telegramId, ctx.from?.first_name);
-
-    const orders = await prisma.order.findMany({
-      where: { passengerId: user.id },
-      orderBy: { createdAt: "desc" },
-      take: 5,
-      include: { fleet: true }
-    });
-
-    if (orders.length === 0) {
-      await ctx.reply("Пока нет поездок. Нажмите «Новый заказ».", { reply_markup: passengerMainMenu() });
+  bot.on("message:text", async (ctx, next) => {
+    const text = ctx.message.text?.trim();
+    if (!text) {
+      await next();
       return;
     }
 
-    const lines = orders.map((order, index) => {
-      const points = order.points as Array<{ label: string }>;
-      const route = points.map((point) => point.label).join(" → ");
-      const price = order.quotedPriceRub ? `${order.quotedPriceRub} ₽` : "—";
-      const date = order.createdAt.toLocaleDateString("ru-RU");
-      return `${index + 1}. ${date}\n${route}\n${statusLabel(order.status)} · ${price}`;
-    });
+    const telegramId = String(ctx.from?.id);
 
-    await ctx.reply(`📋 Последние поездки:\n\n${lines.join("\n\n")}`, {
-      reply_markup: passengerMainMenu()
-    });
-  });
+    if (text === t("kbd.new_order")) {
+      await getOrCreatePassenger(telegramId, ctx.from?.first_name);
+      startDraft(telegramId);
+      await editHub(ctx, telegramId, t("order.from_prompt"), zoneGroupKeyboard("from"));
+      return;
+    }
 
-  bot.hears(["📍 Мои адреса", "❌ Отменить заказ"], async (ctx) => {
-    await ctx.reply("Эта функция скоро появится. Пока заказывайте через «Новый заказ».", {
-      reply_markup: passengerMainMenu()
-    });
-  });
+    if (text === t("kbd.my_trips")) {
+      const user = await getOrCreatePassenger(telegramId, ctx.from?.first_name);
+      const orders = await prisma.order.findMany({
+        where: { passengerId: user.id },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        include: { fleet: true }
+      });
 
-  bot.hears("❓ Помощь", async (ctx) => {
-    await ctx.reply(
-      "Как заказать:\n1. Нажмите «Новый заказ»\n2. Выберите откуда и куда\n3. Выберите автопарк\n4. Подтвердите цену\n\nОтмена: кнопка «Отмена» или команда /cancel",
-      { reply_markup: passengerMainMenu() }
-    );
+      if (orders.length === 0) {
+        await showHub(ctx, telegramId, t("bot.trips_empty"));
+        return;
+      }
+
+      const lines = orders.map((order, index) => {
+        const points = order.points as Array<{ label: string }>;
+        const route = points.map((point) => point.label).join(" → ");
+        const price = order.quotedPriceRub ? `${order.quotedPriceRub} ₽` : "—";
+        const date = order.createdAt.toLocaleDateString("ru-RU");
+        return `${index + 1}. ${date}\n${route}\n${statusLabel(order.status)} · ${price}`;
+      });
+
+      await showHub(ctx, telegramId, `${t("bot.trips_header")}\n\n${lines.join("\n\n")}`);
+      return;
+    }
+
+    if (text === t("kbd.my_addresses") || text === t("kbd.cancel_order")) {
+      await showHub(ctx, telegramId, t("bot.coming_soon"));
+      return;
+    }
+
+    if (text === t("kbd.help")) {
+      await showHub(ctx, telegramId, t("bot.help"));
+      return;
+    }
+
+    await next();
   });
 
   bot.callbackQuery(/^zonegrp:(from|to):(tolbazy|district|back)$/, async (ctx) => {
@@ -146,14 +172,14 @@ export function createTelegramBot(token: string) {
     const telegramId = String(ctx.from.id);
     const draft = getDraft(telegramId);
     if (!draft) {
-      await ctx.answerCallbackQuery({ text: "Сессия истекла. Нажмите «Новый заказ».", show_alert: true });
+      await ctx.answerCallbackQuery({ text: t("alert.session_expired"), show_alert: true });
       return;
     }
 
     if (group === "back") {
       setDraft(telegramId, { ...draft, step: step as "from" | "to" });
       await ctx.editMessageText(
-        step === "from" ? "📍 Откуда поедем?\n\nВыберите зону:" : "📍 Куда поедем?\n\nВыберите зону:",
+        step === "from" ? t("order.from_prompt") : t("order.to_prompt"),
         { reply_markup: zoneGroupKeyboard(step as "from" | "to") }
       );
       await ctx.answerCallbackQuery();
@@ -164,7 +190,7 @@ export function createTelegramBot(token: string) {
     const filtered = zones.filter((zone) => zone.type === group);
 
     await ctx.editMessageText(
-      step === "from" ? "📍 Откуда поедем?" : "📍 Куда поедем?",
+      step === "from" ? t("order.from_title") : t("order.to_title"),
       { reply_markup: zonesKeyboard(step as "from" | "to", filtered) }
     );
     await ctx.answerCallbackQuery();
@@ -175,13 +201,13 @@ export function createTelegramBot(token: string) {
     const telegramId = String(ctx.from.id);
     const draft = getDraft(telegramId);
     if (!draft) {
-      await ctx.answerCallbackQuery({ text: "Сессия истекла", show_alert: true });
+      await ctx.answerCallbackQuery({ text: t("alert.session_expired"), show_alert: true });
       return;
     }
 
     const zone = await prisma.zone.findUnique({ where: { id: zoneId } });
     if (!zone) {
-      await ctx.answerCallbackQuery({ text: "Зона не найдена", show_alert: true });
+      await ctx.answerCallbackQuery({ text: t("alert.zone_not_found"), show_alert: true });
       return;
     }
 
@@ -192,7 +218,7 @@ export function createTelegramBot(token: string) {
         fromZoneId: zone.id,
         fromLabel: zone.name
       });
-      await ctx.editMessageText("📍 Куда поедем?\n\nВыберите зону:", {
+      await ctx.editMessageText(t("order.to_prompt"), {
         reply_markup: zoneGroupKeyboard("to")
       });
       await ctx.answerCallbackQuery();
@@ -207,7 +233,7 @@ export function createTelegramBot(token: string) {
     });
 
     const fleets = await getActiveFleets();
-    await ctx.editMessageText("🚕 Выберите автопарк:", {
+    await ctx.editMessageText(t("order.fleet_prompt"), {
       reply_markup: fleetChoiceKeyboard(fleets)
     });
     await ctx.answerCallbackQuery();
@@ -219,7 +245,7 @@ export function createTelegramBot(token: string) {
     const draft = getDraft(telegramId);
 
     if (!draft?.fromZoneId || !draft.toZoneId || !draft.fromLabel || !draft.toLabel) {
-      await ctx.answerCallbackQuery({ text: "Сначала выберите маршрут", show_alert: true });
+      await ctx.answerCallbackQuery({ text: t("alert.route_required"), show_alert: true });
       return;
     }
 
@@ -237,7 +263,7 @@ export function createTelegramBot(token: string) {
       });
 
       if (!range) {
-        await ctx.answerCallbackQuery({ text: "Не удалось рассчитать цену", show_alert: true });
+        await ctx.answerCallbackQuery({ text: t("alert.price_failed"), show_alert: true });
         return;
       }
 
@@ -262,15 +288,13 @@ export function createTelegramBot(token: string) {
       });
 
       await ctx.editMessageText(
-        [
-          "📋 Ваш заказ",
-          "",
-          `Откуда: ${draft.fromLabel}`,
-          `Куда: ${draft.toLabel}`,
-          `Парк: Любой свободный`,
-          `💰 ${priceLabel}`,
-          details ? `\n${details}` : ""
-        ].join("\n"),
+        buildOrderSummary({
+          fromLabel: draft.fromLabel,
+          toLabel: draft.toLabel,
+          fleetLabel: t("order.fleet_any"),
+          priceLabel,
+          details
+        }),
         { reply_markup: confirmOrderKeyboard() }
       );
       await ctx.answerCallbackQuery();
@@ -279,7 +303,7 @@ export function createTelegramBot(token: string) {
 
     const fleet = await prisma.fleet.findUnique({ where: { id: fleetKey } });
     if (!fleet) {
-      await ctx.answerCallbackQuery({ text: "Автопарк не найден", show_alert: true });
+      await ctx.answerCallbackQuery({ text: t("alert.fleet_not_found"), show_alert: true });
       return;
     }
 
@@ -292,7 +316,7 @@ export function createTelegramBot(token: string) {
     });
 
     if (quote.kind !== "fixed") {
-      await ctx.answerCallbackQuery({ text: "Цену уточнит диспетчер", show_alert: true });
+      await ctx.answerCallbackQuery({ text: t("alert.dispatcher_price"), show_alert: true });
       return;
     }
 
@@ -311,14 +335,12 @@ export function createTelegramBot(token: string) {
     });
 
     await ctx.editMessageText(
-      [
-        "📋 Ваш заказ",
-        "",
-        `Откуда: ${draft.fromLabel}`,
-        `Куда: ${draft.toLabel}`,
-        `Парк: ${fleet.name}`,
-        `💰 ${priceLabel}`
-      ].join("\n"),
+      buildOrderSummary({
+        fromLabel: draft.fromLabel,
+        toLabel: draft.toLabel,
+        fleetLabel: fleet.name,
+        priceLabel
+      }),
       { reply_markup: confirmOrderKeyboard() }
     );
     await ctx.answerCallbackQuery();
@@ -330,7 +352,7 @@ export function createTelegramBot(token: string) {
     const user = await getOrCreatePassenger(telegramId, ctx.from?.first_name);
 
     if (!draft?.fromZoneId || !draft.toZoneId || !draft.fromLabel || !draft.toLabel || !draft.priceLabel) {
-      await ctx.answerCallbackQuery({ text: "Данные заказа неполные", show_alert: true });
+      await ctx.answerCallbackQuery({ text: t("alert.order_incomplete"), show_alert: true });
       return;
     }
 
@@ -342,9 +364,13 @@ export function createTelegramBot(token: string) {
     });
 
     if (activeOrder) {
-      await ctx.answerCallbackQuery({ text: "У вас уже есть активный заказ", show_alert: true });
+      await ctx.answerCallbackQuery({ text: t("alert.active_order"), show_alert: true });
       return;
     }
+
+    const hubMessage = ctx.callbackQuery.message;
+    const passengerChatId = hubMessage ? String(hubMessage.chat.id) : undefined;
+    const passengerMessageId = hubMessage ? String(hubMessage.message_id) : undefined;
 
     const { order, sentCount } = await createAndBroadcastOrder({
       bot,
@@ -356,7 +382,9 @@ export function createTelegramBot(token: string) {
       fleetId: draft.fleetId,
       fleetChoice: draft.fleetChoice ?? "any",
       quotedPriceRub: draft.quotedPriceRub,
-      priceLabel: draft.priceLabel
+      priceLabel: draft.priceLabel,
+      passengerChatId,
+      passengerMessageId
     });
 
     clearDraft(telegramId);
@@ -377,8 +405,8 @@ export function createTelegramBot(token: string) {
 
     await ctx.editMessageText(
       sentCount > 0
-        ? `✅ Заказ принят!\n\n${route}\n💰 ${draft.priceLabel}\n\nИщем машину… (уведомлено водителей: ${sentCount})`
-        : `✅ Заказ принят, но сейчас нет водителей на линии.\n\n${route}\n💰 ${draft.priceLabel}\n\nПовторим поиск автоматически.`
+        ? t("order.accepted", { route, price: draft.priceLabel, sentCount })
+        : t("order.accepted_no_drivers", { route, price: draft.priceLabel })
     );
 
     await ctx.answerCallbackQuery();
@@ -390,15 +418,14 @@ export function createTelegramBot(token: string) {
 
     if (data === "order:cancel") {
       clearDraft(telegramId);
-      await ctx.editMessageText("Заказ отменён.");
-      await ctx.reply("Главное меню:", { reply_markup: passengerMainMenu() });
+      await ctx.editMessageText(t("order.cancelled"));
       await ctx.answerCallbackQuery();
       return;
     }
 
     if (data === "order:restart") {
       startDraft(telegramId);
-      await ctx.editMessageText("📍 Откуда поедем?\n\nВыберите зону:", {
+      await ctx.editMessageText(t("order.from_prompt"), {
         reply_markup: zoneGroupKeyboard("from")
       });
       await ctx.answerCallbackQuery();
@@ -409,7 +436,7 @@ export function createTelegramBot(token: string) {
     if (draft) {
       setDraft(telegramId, { ...draft, step: "to" });
     }
-    await ctx.editMessageText("📍 Куда поедем?\n\nВыберите зону:", {
+    await ctx.editMessageText(t("order.to_prompt"), {
       reply_markup: zoneGroupKeyboard("to")
     });
     await ctx.answerCallbackQuery();
@@ -421,7 +448,7 @@ export function createTelegramBot(token: string) {
     const driver = await prisma.user.findUnique({ where: { telegramId }, include: { fleet: true } });
 
     if (!driver?.fleetId) {
-      await ctx.answerCallbackQuery({ text: "Водитель не привязан к автопарку", show_alert: true });
+      await ctx.answerCallbackQuery({ text: t("driver.not_linked"), show_alert: true });
       return;
     }
 
@@ -432,7 +459,7 @@ export function createTelegramBot(token: string) {
     });
 
     if (!result.accepted) {
-      await ctx.editMessageText("❌ Заказ уже принят другим водителем");
+      await ctx.editMessageText(t("driver.offer_taken"));
       await ctx.answerCallbackQuery();
       return;
     }
@@ -442,15 +469,28 @@ export function createTelegramBot(token: string) {
       include: { passenger: true, fleet: true }
     });
 
-    if (order?.passenger.telegramId) {
-      await bot.api.sendMessage(
-        order.passenger.telegramId,
-        `✅ Машина найдена!\nВодитель: ${driver.name ?? "водитель"}\nПарк: ${order.fleet?.name ?? "—"}\n💰 ${order.quotedPriceRub ?? "—"} ₽`,
-        { reply_markup: activeRideKeyboard(order.fleet?.dispatcherPhone ?? undefined) }
-      );
+    if (order) {
+      const foundText = t("order.driver_found", {
+        driverName: driver.name ?? "водитель",
+        fleetName: order.fleet?.name ?? "—",
+        price: order.quotedPriceRub ?? "—"
+      });
+
+      const edited = await editPassengerOrderMessage(bot.api, {
+        chatId: order.passengerChatId,
+        messageId: order.passengerMessageId,
+        text: foundText,
+        replyMarkup: activeRideKeyboard(order.fleet?.dispatcherPhone ?? undefined)
+      });
+
+      if (!edited && order.passenger.telegramId) {
+        await bot.api.sendMessage(order.passenger.telegramId, foundText, {
+          reply_markup: activeRideKeyboard(order.fleet?.dispatcherPhone ?? undefined)
+        });
+      }
     }
 
-    await ctx.editMessageText("✅ Вы приняли заказ. Свяжитесь с пассажиром.");
+    await ctx.editMessageText(t("driver.accepted"));
     await ctx.answerCallbackQuery();
   });
 
@@ -465,7 +505,7 @@ export function createTelegramBot(token: string) {
       driverUserId: driver.id,
       round: Number(roundValue)
     });
-    await ctx.editMessageText("Вы пропустили заказ.");
+    await ctx.editMessageText(t("driver.skipped"));
     await ctx.answerCallbackQuery();
   });
 
