@@ -1,0 +1,166 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  passenger
+  driver
+  dispatcher
+  fleet_admin
+  super_admin
+}
+
+enum ZoneType {
+  tolbazy
+  district
+}
+
+enum OrderStatus {
+  draft
+  awaiting_price
+  awaiting_confirm
+  broadcasting
+  taken
+  arriving
+  waiting
+  in_trip
+  completed
+  cancelled
+  expired
+}
+
+enum PaymentMethod {
+  cash
+  transfer
+}
+
+model User {
+  id          String   @id @default(cuid())
+  telegramId String?  @unique
+  phone       String?
+  name        String?
+  role        UserRole @default(passenger)
+  fleetId     String?
+  fleet       Fleet?   @relation(fields: [fleetId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  passengerOrders Order[] @relation("PassengerOrders")
+  driverOrders    Order[] @relation("DriverOrders")
+  driverProfile   Driver?
+}
+
+model Fleet {
+  id              String   @id @default(cuid())
+  code            String   @unique
+  name            String
+  dispatcherPhone String?
+  monthlyFeeRub   Int      @default(0)
+  paidUntil        DateTime?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  users   User[]
+  drivers Driver[]
+  tariffs TariffCell[]
+  orders  Order[]
+}
+
+model Driver {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  fleetId   String
+  carModel  String?
+  carColor  String?
+  plate     String?
+  isOnline  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id])
+  fleet Fleet @relation(fields: [fleetId], references: [id])
+}
+
+model Zone {
+  id          String   @id
+  name        String
+  type        ZoneType
+  description String
+  settlements String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  fromTariffs TariffCell[] @relation("FromZone")
+  toTariffs   TariffCell[] @relation("ToZone")
+}
+
+model TariffCell {
+  id         String @id @default(cuid())
+  fleetId    String
+  fromZoneId String
+  toZoneId   String
+  priceRub   Int
+
+  fleet    Fleet @relation(fields: [fleetId], references: [id])
+  fromZone Zone  @relation("FromZone", fields: [fromZoneId], references: [id])
+  toZone   Zone  @relation("ToZone", fields: [toZoneId], references: [id])
+
+  @@unique([fleetId, fromZoneId, toZoneId])
+}
+
+model Order {
+  id                String        @id @default(cuid())
+  passengerId       String
+  fleetId           String?
+  driverId          String?
+  status            OrderStatus   @default(draft)
+  points            Json
+  isRoundTrip       Boolean       @default(false)
+  quotedPriceRub    Int?
+  finalPriceRub     Int?
+  paymentPreference PaymentMethod?
+  paymentMethod     PaymentMethod?
+  comment           String?
+  currentRound      Int           @default(0)
+  scheduledFor      DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  passenger User    @relation("PassengerOrders", fields: [passengerId], references: [id])
+  driver    User?   @relation("DriverOrders", fields: [driverId], references: [id])
+  fleet     Fleet?  @relation(fields: [fleetId], references: [id])
+  events    OrderEvent[]
+  offers    OrderOffer[]
+}
+
+model OrderOffer {
+  id        String   @id @default(cuid())
+  orderId   String
+  driverId  String
+  round     Int
+  status    String   @default("sent")
+  messageId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@unique([orderId, driverId, round])
+}
+
+model OrderEvent {
+  id        String   @id @default(cuid())
+  orderId   String
+  actorId   String?
+  type      String
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id])
+}
